@@ -12,6 +12,7 @@ import torch
 import torch.optim as optim
 from tqdm import tqdm
 
+from knowledge_distillation.KD_training import get_soft_target_loss_using_knowledge_distillation
 from utils.metric_util import per_class_iu, fast_hist_crop
 from dataloader.pc_dataset import get_SemKITTI_label_name
 from builder import data_builder, model_builder, loss_builder, student_model_builder
@@ -41,11 +42,11 @@ def main(args):
     model_config = configs['model_params']
     train_hypers = configs['train_params']
 
-    model_to_train = model_config['model_to_train']
     grid_size = model_config['output_shape']
     num_class = model_config['num_class']
     ignore_label = dataset_config['ignore_label']
 
+    teacher_model_load_path = train_hypers['model_load_path']
     model_load_path = train_hypers['model_load_path']
     model_save_path = train_hypers['model_save_path']
 
@@ -53,16 +54,20 @@ def main(args):
     unique_label = np.asarray(sorted(list(SemKITTI_label_name.keys())))[1:] - 1
     unique_label_str = [SemKITTI_label_name[x] for x in unique_label + 1]
 
-    my_model = model_builder.build(model_config)
-    if os.path.exists(model_load_path):
-        my_model = load_checkpoint(model_load_path, my_model)
+    my_teacher_model = model_builder.build(model_config)
+    if os.path.exists(teacher_model_load_path):
+        my_teacher_model = load_checkpoint(model_load_path, my_teacher_model)
+    else:
+        raise Exception('Teacher model to train the student model is missing. '\
+                        'Please pass the teacher model specified in the path "model_load_path" inside the config file')
 
-    # if the "model_to_train" is "student" in config, just load student model
-    if model_to_train == "student":
-        my_model = student_model_builder.build(model_config)
+    my_teacher_model.to(pytorch_device)
+    # This will always be in evaluation mode as it is already trained
+    my_teacher_model.eval()
 
-    my_model.to(pytorch_device)
-    optimizer = optim.Adam(my_model.parameters(), lr=train_hypers["learning_rate"])
+    my_student_model = student_model_builder.build(model_config)
+    my_student_model.to(pytorch_device)
+    optimizer = optim.Adam(my_student_model.parameters(), lr=train_hypers["learning_rate"])
 
     loss_func, lovasz_softmax = loss_builder.build(wce=True, lovasz=True,
                                                    num_class=num_class, ignore_label=ignore_label)
@@ -75,7 +80,7 @@ def main(args):
     # training
     epoch = 0
     best_val_miou = 0
-    my_model.train()
+    my_student_model.train()
     global_iter = 0
     check_iter = train_hypers['eval_every_n_steps']
 
@@ -90,7 +95,7 @@ def main(args):
         # lr_scheduler.step(epoch)
         for i_iter, (_, train_vox_label, train_grid, _, train_pt_fea) in enumerate(train_dataset_loader):
             # if global_iter % check_iter == 0 and epoch > 0:
-            #     evaluate_model(best_val_miou, loss_func, lovasz_softmax, model_save_path, my_model, pytorch_device,
+            #     evaluate_model(best_val_miou, loss_func, lovasz_softmax, model_save_path, my_student_model, pytorch_device,
             #                    unique_label, unique_label_str, val_dataset_loader)
 
             train_pt_fea_ten = [torch.from_numpy(i).type(torch.FloatTensor).to(pytorch_device) for i in train_pt_fea]
@@ -98,10 +103,28 @@ def main(args):
             train_vox_ten = [torch.from_numpy(i).to(pytorch_device) for i in train_grid]
             point_label_tensor = train_vox_label.type(torch.LongTensor).to(pytorch_device)
 
+            teacher_outputs = my_teacher_model(train_pt_fea_ten, train_vox_ten,
+                                       point_label_tensor.shape[0])  # train_batch_size)
+
             # forward + backward + optimize
-            outputs = my_model(train_pt_fea_ten, train_vox_ten, point_label_tensor.shape[0] )#train_batch_size)
-            loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
+            outputs = my_student_model(train_pt_fea_ten, train_vox_ten, point_label_tensor.shape[0] )#train_batch_size)
+            print('outputs.shape', outputs.shape)
+            print('teacher_outputs.shape', outputs.shape)
+            current_loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
                 outputs, point_label_tensor)
+
+            current_loss_weight = 0.75
+
+            loss = current_loss_weight * current_loss
+
+            soft_target_loss = get_soft_target_loss_using_knowledge_distillation(teacher_outputs, outputs, T=2,
+                                                                                 soft_target_loss_weight=0.25)
+
+            print('loss -> ', loss)
+            print('soft_target_loss -> ', soft_target_loss)
+
+            loss += soft_target_loss
+
             loss.backward()
             optimizer.step()
             loss_list.append(loss.item())
@@ -125,7 +148,7 @@ def main(args):
 
         print('\n***** epoch %d, loss: %s *****\n' % (epoch, np.mean(loss_list) if loss_list else "Empty loss list"))
         # Evaluate the model after every epoch & save if it is better in this epoch than the best known
-        best_val_miou = evaluate_model(best_val_miou, loss_func, lovasz_softmax, model_save_path, my_model, pytorch_device,
+        best_val_miou = evaluate_model(best_val_miou, loss_func, lovasz_softmax, model_save_path, my_student_model, pytorch_device,
                        unique_label, unique_label_str, val_dataset_loader)
         pbar.close()
         epoch += 1

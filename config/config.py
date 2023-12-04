@@ -7,6 +7,7 @@ from strictyaml import Bool, Float, Int, Map, Seq, Str, as_document, load
 
 model_params = Map(
     {
+        "model_to_train": Str(),
         "model_architecture": Str(),
         "output_shape": Seq(Int()),
         "fea_dim": Int(),
@@ -66,7 +67,7 @@ train_params = Map(
      }
 )
 
-schema_v4 = Map(
+schema_v5 = Map(
     {
         "format_version": Int(),
         "model_params": model_params,
@@ -78,7 +79,7 @@ schema_v4 = Map(
 )
 
 
-SCHEMA_FORMAT_VERSION_TO_SCHEMA = {4: schema_v4}
+SCHEMA_FORMAT_VERSION_TO_SCHEMA = {5: schema_v5}
 
 
 def load_config_data(path: str) -> dict:
@@ -94,7 +95,7 @@ def load_config_data(path: str) -> dict:
 
 
 def config_data_to_config(data):  # type: ignore
-    return as_document(data, schema_v4)
+    return as_document(data, schema_v5)
 
 
 def save_config_data(data: dict, path: str) -> None:
