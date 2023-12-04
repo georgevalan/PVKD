@@ -101,6 +101,7 @@ class ResBlock(nn.Module):
         super(ResBlock, self).__init__()
         self.pooling = pooling
         self.drop_out = drop_out
+        self.dropout = nn.Dropout(dropout_rate)
 
         self.conv1 = conv3x1(in_filters, out_filters, indice_key=indice_key + "bef")
         self.act1 = nn.LeakyReLU()
@@ -137,20 +138,24 @@ class ResBlock(nn.Module):
 
     def forward(self, x):
         shortcut = self.conv1(x)
-        shortcut = shortcut.replace_feature(self.act1(shortcut.features))
         shortcut = shortcut.replace_feature(self.bn0(shortcut.features))
+        shortcut = shortcut.replace_feature(self.act1(shortcut.features))
+        shortcut = shortcut.replace_feature(self.dropout(shortcut.features))
 
         shortcut = self.conv1_2(shortcut)
-        shortcut = shortcut.replace_feature(self.act1_2(shortcut.features))
         shortcut = shortcut.replace_feature(self.bn0_2(shortcut.features))
+        shortcut = shortcut.replace_feature(self.act1_2(shortcut.features))
+        shortcut = shortcut.replace_feature(self.dropout(shortcut.features))
 
         resA = self.conv2(x)
-        resA = resA.replace_feature(self.act2(resA.features))
         resA = resA.replace_feature(self.bn1(resA.features))
+        resA = resA.replace_feature(self.act2(resA.features))
+        resA = resA.replace_feature(self.dropout(resA.features))
 
         resA = self.conv3(resA)
-        resA = resA.replace_feature(self.act3(resA.features))
         resA = resA.replace_feature(self.bn2(resA.features))
+        resA = resA.replace_feature(self.act3(resA.features))
+        resA = resA.replace_feature(self.dropout(resA.features))
 
         resA = resA.replace_feature(resA.features + shortcut.features)
 
@@ -254,13 +259,13 @@ class ReconBlock(nn.Module):
         return shortcut
 
 
-class Asymm_3d_spconv(nn.Module):
+class Asymm_3d_spconv_student(nn.Module):
     def __init__(self,
                  output_shape,
                  use_norm=True,
                  num_input_features=128,
                  nclasses=20, n_height=32, strict=False, init_size=16):
-        super(Asymm_3d_spconv, self).__init__()
+        super(Asymm_3d_spconv_student, self).__init__()
         self.nclasses = nclasses
         self.nheight = n_height
         self.strict = False
@@ -270,12 +275,13 @@ class Asymm_3d_spconv(nn.Module):
         print(sparse_shape)
         self.sparse_shape = sparse_shape
 
+        # Drop twice the number of teacher layers in the ResBlock of this student model
         self.downCntx = ResContextBlock(num_input_features, init_size, indice_key="pre")
-        self.resBlock2 = ResBlock(init_size, 2 * init_size, 0.0, height_pooling=True, indice_key="down2")
-        self.resBlock3 = ResBlock(2 * init_size, 4 * init_size, 0.0, height_pooling=True, indice_key="down3")
-        self.resBlock4 = ResBlock(4 * init_size, 8 * init_size, 0.0, pooling=True, height_pooling=False,
+        self.resBlock2 = ResBlock(init_size, 2 * init_size, 0.5, height_pooling=True, indice_key="down2")
+        self.resBlock3 = ResBlock(2 * init_size, 4 * init_size, 0.5, height_pooling=True, indice_key="down3")
+        self.resBlock4 = ResBlock(4 * init_size, 8 * init_size, 0.5, pooling=True, height_pooling=False,
                                   indice_key="down4")
-        self.resBlock5 = ResBlock(8 * init_size, 16 * init_size, 0.0, pooling=True, height_pooling=False,
+        self.resBlock5 = ResBlock(8 * init_size, 16 * init_size, 0.5, pooling=True, height_pooling=False,
                                   indice_key="down5")
 
         self.upBlock0 = UpBlock(16 * init_size, 16 * init_size, indice_key="up0", up_key="down5")
@@ -311,5 +317,7 @@ class Asymm_3d_spconv(nn.Module):
         up0e = up0e.replace_feature(torch.cat((up0e.features, up1e.features), 1))
 
         logits = self.logits(up0e)
+        print("logits -> ", logits)
         y = logits.dense()
+        print("y -> ", y)
         return y

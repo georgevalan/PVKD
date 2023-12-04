@@ -53,5 +53,5 @@ class cylinder_asym(nn.Module):
             for idx in range(1, voting_num, 1):
                 fused_predict += features_ori[idx][0, :, val_grid[idx][:, 0], val_grid[idx][:, 1], val_grid[idx][:, 2]]
             return fused_predict
-        else: 
+        else:
             return spatial_features
