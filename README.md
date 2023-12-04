@@ -112,6 +112,9 @@ CUDA_VISIBLE_DEVICES=0 python -u train_cyl_sem.py
 
 Remember to change the `imageset` of `val_data_loader` to `val`, `return_test` of `dataset_params` to `False` in `semantickitti.yaml`. Currently, we only support vanilla training.
 
+## pvkd.ipynb
+
+To help others who want to try my repo I have uploaded the notebook that I used to run all these scripts to train & test models. `pvkd.ipynb` is available at the project root location. Take a look.
 
 ## Useful Training Tips
 1. Finetuning.
